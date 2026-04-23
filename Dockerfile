@@ -20,6 +20,9 @@ ENV HOSTNAME=0.0.0.0
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/db ./db
 
 EXPOSE 3000
 

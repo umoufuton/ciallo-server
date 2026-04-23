@@ -36,6 +36,12 @@ POSTGRES_USER=phoenix
 POSTGRES_PASSWORD=replace-with-a-strong-password
 API_BASE_URL=http://47.98.212.205
 CLIENT_APP_KEY=replace-with-a-random-client-key
+AUTH_TOKEN_SECRET=replace-with-a-random-32-plus-char-secret
+AUTH_TOKEN_TTL_SECONDS=604800
+EXTERNAL_PLATFORM_PILOT_URL=https://example.com/api/pilots?username={username}
+EXTERNAL_PLATFORM_USERINFO_URL=https://example.com/api/v3/pilot/user
+EXTERNAL_PLATFORM_VERIFY_URL=https://example.com/api/auth/verify
+EXTERNAL_PLATFORM_API_KEY=replace-with-your-external-api-key
 ```
 
 ## 4. Start containers

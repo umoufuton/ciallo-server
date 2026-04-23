@@ -1,0 +1,7 @@
+ALTER TABLE airports
+  ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS country_iso2 VARCHAR(2),
+  ADD COLUMN IF NOT EXISTS country_name TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_airports_lat_lon ON airports (latitude, longitude);
