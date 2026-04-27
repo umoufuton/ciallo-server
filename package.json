@@ -14,7 +14,8 @@
     "import:aircraft": "node scripts/import-aircraft.mjs",
     "import:routes": "node scripts/import-routes.mjs",
     "import:pilots": "node scripts/import-pilots-json.mjs",
-    "sync:airport-coords": "node scripts/sync-airport-coords-from-ops.mjs"
+    "sync:airport-coords": "node scripts/sync-airport-coords-from-ops.mjs",
+    "sync:navigraph-navdata": "node scripts/sync-navigraph-navdata.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.0",
