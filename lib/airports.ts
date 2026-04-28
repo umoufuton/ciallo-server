@@ -48,9 +48,50 @@ export type AirportListFilters = {
   limit?: number;
 };
 
+export type AirportMapRecord = {
+  icao: string;
+  iata: string | null;
+  name: string;
+  lat: number;
+  lon: number;
+  base: boolean;
+  category: string | null;
+  updated_at: string;
+};
+
+export type AirportMapBboxFilters = {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+  zoom?: number;
+  limit?: number;
+};
+
 function normalizeLimit(limit?: number) {
   if (!limit || Number.isNaN(limit)) return 50;
   return Math.min(Math.max(limit, 1), 200);
+}
+
+function normalizeMapLimit(limit?: number) {
+  if (!limit || Number.isNaN(limit)) return 500;
+  return Math.min(Math.max(limit, 1), 2000);
+}
+
+function getGridSizeForZoom(zoom?: number) {
+  if (zoom === undefined || Number.isNaN(zoom)) return 1;
+  if (zoom < 4) return 10;
+  if (zoom < 6) return 3;
+  if (zoom < 8) return 1;
+  return 0;
+}
+
+function getPerBucketForZoom(zoom?: number) {
+  if (zoom === undefined || Number.isNaN(zoom)) return 4;
+  if (zoom < 4) return 2;
+  if (zoom < 6) return 3;
+  if (zoom < 8) return 4;
+  return 0;
 }
 
 export async function listAirports(filters: AirportListFilters) {
@@ -104,4 +145,145 @@ export async function getAirportByCode(code: string) {
   );
 
   return result.rows[0] ?? null;
+}
+
+export async function getAirportMapIndexVersion() {
+  const db = getDb();
+  const result = await db.query<{ count: number; max_updated_at: string | null }>(
+    `
+      SELECT
+        COUNT(*)::int AS count,
+        MAX(updated_at)::text AS max_updated_at
+      FROM airports
+      WHERE latitude IS NOT NULL
+        AND longitude IS NOT NULL
+    `,
+  );
+
+  const row = result.rows[0] ?? { count: 0, max_updated_at: null };
+  const version = `${row.count}:${row.max_updated_at ?? "none"}`;
+  return {
+    count: row.count,
+    maxUpdatedAt: row.max_updated_at,
+    version,
+    etag: `"airports-map-index-${Buffer.from(version).toString("base64url")}"`,
+  };
+}
+
+export async function listAirportMapIndex() {
+  const db = getDb();
+  const result = await db.query<AirportMapRecord>(
+    `
+      SELECT
+        icao_code AS icao,
+        iata_code AS iata,
+        name,
+        latitude AS lat,
+        longitude AS lon,
+        is_base AS base,
+        category,
+        updated_at::text AS updated_at
+      FROM airports
+      WHERE latitude IS NOT NULL
+        AND longitude IS NOT NULL
+      ORDER BY
+        is_base DESC,
+        CASE LOWER(COALESCE(category, ''))
+          WHEN 'large_airport' THEN 0
+          WHEN 'international' THEN 0
+          WHEN 'medium_airport' THEN 1
+          WHEN 'domestic' THEN 1
+          ELSE 2
+        END,
+        icao_code ASC
+    `,
+  );
+
+  return result.rows;
+}
+
+export async function listAirportMapBbox(filters: AirportMapBboxFilters) {
+  const db = getDb();
+  const limit = normalizeMapLimit(filters.limit);
+  const gridSize = getGridSizeForZoom(filters.zoom);
+  const perBucket = getPerBucketForZoom(filters.zoom);
+  const crossesDateLine = filters.minLon > filters.maxLon;
+
+  const longitudeCondition = crossesDateLine
+    ? "(longitude >= $1 OR longitude <= $3)"
+    : "longitude BETWEEN $1 AND $3";
+
+  const values = [
+    filters.minLon,
+    filters.minLat,
+    filters.maxLon,
+    filters.maxLat,
+    limit + 1,
+  ];
+
+  const baseQuery = `
+    SELECT
+      icao_code AS icao,
+      iata_code AS iata,
+      name,
+      latitude AS lat,
+      longitude AS lon,
+      is_base AS base,
+      category,
+      updated_at::text AS updated_at,
+      CASE LOWER(COALESCE(category, ''))
+        WHEN 'large_airport' THEN 0
+        WHEN 'international' THEN 0
+        WHEN 'medium_airport' THEN 1
+        WHEN 'domestic' THEN 1
+        ELSE 2
+      END AS category_priority
+    FROM airports
+    WHERE latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND latitude BETWEEN $2 AND $4
+      AND ${longitudeCondition}
+  `;
+
+  if (gridSize <= 0 || perBucket <= 0) {
+    const result = await db.query<AirportMapRecord>(
+      `
+        SELECT icao, iata, name, lat, lon, base, category, updated_at
+        FROM (${baseQuery}) airports_in_bbox
+        ORDER BY base DESC, category_priority ASC, icao ASC
+        LIMIT $5
+      `,
+      values,
+    );
+    return {
+      airports: result.rows.slice(0, limit),
+      truncated: result.rows.length > limit,
+    };
+  }
+
+  values.push(gridSize, perBucket);
+  const result = await db.query<AirportMapRecord>(
+    `
+      WITH ranked AS (
+        SELECT
+          *,
+          ROW_NUMBER() OVER (
+            PARTITION BY FLOOR(lat / $6), FLOOR(lon / $6)
+            ORDER BY base DESC, category_priority ASC, icao ASC
+          ) AS bucket_rank
+        FROM (${baseQuery}) airports_in_bbox
+      )
+      SELECT icao, iata, name, lat, lon, base, category, updated_at
+      FROM ranked
+      WHERE bucket_rank <= $7
+      ORDER BY base DESC, category_priority ASC, icao ASC
+      LIMIT $5
+    `,
+    values,
+  );
+
+  return {
+    airports: result.rows.slice(0, limit),
+    truncated: result.rows.length > limit,
+  };
 }
